@@ -9,7 +9,10 @@
     "dev": "vite",
     "build": "node ./node_modules/vite/bin/vite.js build",
     "preview": "vite preview",
-    "start": "vite"
+    "start": "vite",
+    "netlify:login": "npx --yes netlify-cli login",
+    "netlify:link": "npx --yes netlify-cli link",
+    "deploy:netlify": "npm run build && npx --yes netlify-cli deploy --prod --dir=dist"
   },
   "dependencies": {
     "framer-motion": "^12.25.0",
