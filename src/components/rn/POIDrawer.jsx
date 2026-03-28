@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -12,6 +12,7 @@ import {
 import { tap } from "../../lib/motionPresets.js";
 import { getPoiGalleryItems, getPoiNoteFeedItems } from "../../data/poiNoteMedia.js";
 import { PoiPlayReviews } from "./PoiPlayReviews.jsx";
+import { buildPoiShareUrl } from "../../lib/publicSiteUrl.js";
 
 const TOTAL_NOTE_COUNT = 435;
 
@@ -23,10 +24,30 @@ export function POIDrawer({
 }) {
   const [waitFeedback, setWaitFeedback] = useState(null);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [shareHint, setShareHint] = useState(null);
 
   useEffect(() => {
     setWaitFeedback(null);
     setNotesOpen(false);
+    setShareHint(null);
+  }, [poi?.id]);
+
+  const onShareLink = useCallback(async () => {
+    const id = poi?.id;
+    if (!id) return;
+    const url = buildPoiShareUrl(id);
+    if (!url) {
+      setShareHint("无法生成链接");
+      window.setTimeout(() => setShareHint(null), 2200);
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setShareHint("已复制链接");
+    } catch {
+      setShareHint("复制失败，请用浏览器地址栏分享");
+    }
+    window.setTimeout(() => setShareHint(null), 2800);
   }, [poi?.id]);
 
   const waitLabel = useMemo(() => {
@@ -80,6 +101,13 @@ export function POIDrawer({
         transition={{ type: "spring", damping: 32, stiffness: 360 }}
         onClick={(e) => e.stopPropagation()}
       >
+        {shareHint ? (
+          <div className="pointer-events-none absolute left-0 right-0 top-9 z-[60] flex justify-center px-4">
+            <p className="max-w-[95%] rounded-xl bg-zinc-900/92 px-3 py-2 text-center text-[10px] font-bold leading-snug text-white shadow-lg">
+              {shareHint}
+            </p>
+          </div>
+        ) : null}
         <AnimatePresence mode="wait">
           {notesOpen ? (
             <motion.div
@@ -123,6 +151,7 @@ export function POIDrawer({
                       type="button"
                       className="rounded-lg p-2 text-zinc-600"
                       aria-label="分享"
+                      onClick={onShareLink}
                     >
                       <Share2 className="h-4 w-4" strokeWidth={2} />
                     </button>
@@ -211,14 +240,25 @@ export function POIDrawer({
                   <div className="rounded-full border border-[#ff2442]/30 bg-[#ff2442]/10 px-3 py-1 text-[11px] font-black text-[#ff2442]">
                     预计等待：{waitLabel}
                   </div>
-                  <motion.button
-                    type="button"
-                    onClick={onClose}
-                    className="rounded-xl border border-black/10 bg-white p-2"
-                    {...tap}
-                  >
-                    <X className="h-4 w-4" />
-                  </motion.button>
+                  <div className="flex items-center gap-1">
+                    <motion.button
+                      type="button"
+                      aria-label="分享"
+                      onClick={onShareLink}
+                      className="rounded-xl border border-black/10 bg-white p-2 text-zinc-700"
+                      {...tap}
+                    >
+                      <Share2 className="h-4 w-4" strokeWidth={2} />
+                    </motion.button>
+                    <motion.button
+                      type="button"
+                      onClick={onClose}
+                      className="rounded-xl border border-black/10 bg-white p-2"
+                      {...tap}
+                    >
+                      <X className="h-4 w-4" />
+                    </motion.button>
+                  </div>
                 </div>
               </div>
 

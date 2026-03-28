@@ -27,6 +27,14 @@ import { CHAT_CONVERSATIONS } from "./data/chatConversations.js";
 // Silent navigation default start point: Mickey Avenue.
 const START_PT = { xPct: 50, yPct: 68 };
 
+function readInitialPoiIdFromUrl() {
+  try {
+    return new URLSearchParams(window.location.search).get("poi");
+  } catch {
+    return null;
+  }
+}
+
 export default function App() {
   const [viewMode, setViewMode] = useState("map");
   const [activeCategories, setActiveCategories] = useState(
@@ -197,6 +205,17 @@ export default function App() {
       });
     }, 1200);
   }, [footprintOn, footprintPathPct]);
+
+  useEffect(() => {
+    const id = readInitialPoiIdFromUrl();
+    if (!id) return;
+    const found = POIS.find((p) => p.id === id);
+    if (!found) return;
+    setDockTab("explore");
+    setXhsHomeEntered(true);
+    setViewMode("map");
+    setDrawerPoiId(id);
+  }, []);
 
   useEffect(() => {
     if (!footprintOn) return undefined;
