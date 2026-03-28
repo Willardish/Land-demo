@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -25,12 +25,27 @@ export function POIDrawer({
   const [waitFeedback, setWaitFeedback] = useState(null);
   const [notesOpen, setNotesOpen] = useState(false);
   const [shareHint, setShareHint] = useState(null);
+  /** 避免移动端「触摸打开抽屉」后，合成 click 落在遮罩上立刻关抽屉 */
+  const backdropIgnoreUntilRef = useRef(0);
 
   useEffect(() => {
     setWaitFeedback(null);
     setNotesOpen(false);
     setShareHint(null);
+    backdropIgnoreUntilRef.current = Date.now() + 550;
   }, [poi?.id]);
+
+  const onBackdropAttemptClose = useCallback(
+    (e) => {
+      if (Date.now() < backdropIgnoreUntilRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      onClose();
+    },
+    [onClose]
+  );
 
   const onShareLink = useCallback(async () => {
     const id = poi?.id;
@@ -85,11 +100,27 @@ export function POIDrawer({
         key="poi-bg"
         type="button"
         aria-label="关闭"
-        className="absolute inset-0 z-[50] bg-black/35 backdrop-blur-[2px]"
+        className="absolute inset-0 z-[50] bg-black/35 backdrop-blur-[2px] touch-manipulation"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        onClick={onClose}
+        onClick={onBackdropAttemptClose}
+        onTouchEnd={(e) => {
+          if (Date.now() < backdropIgnoreUntilRef.current) {
+            try {
+              e.preventDefault();
+            } catch {
+              /* ignore */
+            }
+            e.stopPropagation();
+          }
+        }}
+        onPointerUp={(e) => {
+          if (Date.now() < backdropIgnoreUntilRef.current) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+        }}
       />
 
       <motion.div

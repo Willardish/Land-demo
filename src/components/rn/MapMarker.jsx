@@ -47,6 +47,8 @@ function MapMarkerComponent({
   const longArmed = useRef(false);
   const shortHandled = useRef(false);
   const didLongPressRef = useRef(false);
+  /** 手机 Web：用 touch 序列打开 POI，并在 touchend preventDefault，避免合成 click 点到遮罩关抽屉 */
+  const touchStartRef = useRef(null);
   const Icon = ICONS[poi.iconKey] || MapPin;
   // Map layer is scaled by parent (`userZoom` / `SILENT_SCALE`).
   // We apply inverse scaling so the label size stays roughly constant on screen.
@@ -57,6 +59,18 @@ function MapMarkerComponent({
       clearTimeout(timer.current);
       timer.current = null;
     }
+  };
+
+  const armLongPress = () => {
+    clearTimer();
+    longArmed.current = false;
+    didLongPressRef.current = false;
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      longArmed.current = true;
+      didLongPressRef.current = true;
+      onLongPress(poi.id);
+    }, 520);
   };
 
   return (
@@ -70,26 +84,65 @@ function MapMarkerComponent({
     >
       <motion.button
         type="button"
+        onTouchStart={(e) => {
+          e.stopPropagation();
+          if (e.touches.length !== 1) return;
+          const t = e.touches[0];
+          touchStartRef.current = { x: t.clientX, y: t.clientY };
+          shortHandled.current = false;
+          armLongPress();
+        }}
+        onTouchEnd={(e) => {
+          e.stopPropagation();
+          clearTimer();
+          const start = touchStartRef.current;
+          const t = e.changedTouches[0];
+          touchStartRef.current = null;
+          if (!t || !start) {
+            longArmed.current = false;
+            didLongPressRef.current = false;
+            return;
+          }
+          const moved = Math.hypot(t.clientX - start.x, t.clientY - start.y);
+          if (moved > 14) {
+            longArmed.current = false;
+            didLongPressRef.current = false;
+            return;
+          }
+          const longDone = didLongPressRef.current;
+          didLongPressRef.current = false;
+          longArmed.current = false;
+          if (!longDone) {
+            try {
+              e.preventDefault();
+            } catch {
+              /* passive 环境下可能无效，POIDrawer 仍有遮罩防抖 */
+            }
+            shortHandled.current = true;
+            onShortPress(poi.id);
+          }
+        }}
+        onTouchCancel={(e) => {
+          e.stopPropagation();
+          touchStartRef.current = null;
+          clearTimer();
+          longArmed.current = false;
+          didLongPressRef.current = false;
+        }}
         onPointerDown={(e) => {
           e.stopPropagation();
-          if (e.button !== 0 && e.pointerType !== "touch") return;
+          if (e.pointerType === "touch") return;
+          if (e.button !== 0) return;
           try {
             e.currentTarget.setPointerCapture(e.pointerId);
           } catch {
             /* ignore */
           }
           shortHandled.current = false;
-          didLongPressRef.current = false;
-          clearTimer();
-          longArmed.current = false;
-          timer.current = setTimeout(() => {
-            timer.current = null;
-            longArmed.current = true;
-            didLongPressRef.current = true;
-            onLongPress(poi.id);
-          }, 520);
+          armLongPress();
         }}
         onPointerUp={(e) => {
+          if (e.pointerType === "touch") return;
           e.stopPropagation();
           clearTimer();
           if (!longArmed.current && !shortHandled.current) {
@@ -106,6 +159,7 @@ function MapMarkerComponent({
           }
         }}
         onPointerCancel={(e) => {
+          if (e.pointerType === "touch") return;
           e.stopPropagation();
           clearTimer();
           longArmed.current = false;
@@ -118,21 +172,22 @@ function MapMarkerComponent({
           }
         }}
         onPointerLeave={(e) => {
-          // 触屏上 pointerleave 容易误触（地图微动、合成事件），不要清掉长按计时
           if (e.pointerType === "mouse") clearTimer();
         }}
         onClick={(e) => {
           e.stopPropagation();
+          if (shortHandled.current) {
+            shortHandled.current = false;
+            return;
+          }
           clearTimer();
           if (didLongPressRef.current) {
             didLongPressRef.current = false;
             longArmed.current = false;
             return;
           }
-          if (!shortHandled.current) {
-            shortHandled.current = true;
-            onShortPress(poi.id);
-          }
+          shortHandled.current = true;
+          onShortPress(poi.id);
         }}
         className={`pointer-events-auto touch-manipulation flex min-h-11 min-w-11 items-center gap-0.5 rounded-full border border-white/80 bg-white/95 text-left shadow-lg backdrop-blur-md ${
           compact
