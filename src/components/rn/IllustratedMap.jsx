@@ -36,6 +36,7 @@ export function IllustratedMap({
 }) {
   const isSilent = Boolean(silentNav?.center);
   const containerRef = useRef(null);
+  const panLayerRef = useRef(null);
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
   const userPanRef = useRef({ x: 0, y: 0 });
@@ -50,6 +51,9 @@ export function IllustratedMap({
     panStartX: 0,
     panStartY: 0,
     dragging: false,
+    /** 触屏上避免 pointerdown 立刻 capture，否则 POI 的 tap 序列常被地图抢走 */
+    captured: false,
+    capturePointerId: null,
   });
 
   const [userPan, setUserPan] = useState({ x: 0, y: 0 });
@@ -129,6 +133,8 @@ export function IllustratedMap({
         clearLongPressTimer();
         dragRef.current.active = false;
         dragRef.current.dragging = false;
+        dragRef.current.captured = false;
+        dragRef.current.capturePointerId = null;
         const pts = [...pointersRef.current.values()];
         const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
         pinchRef.current = {
@@ -150,6 +156,8 @@ export function IllustratedMap({
         panStartX: pan.x,
         panStartY: pan.y,
         dragging: false,
+        captured: false,
+        capturePointerId: null,
       };
       const xPct = ((e.clientX - rect.left) / rect.width) * 100;
       const yPct = ((e.clientY - rect.top) / rect.height) * 100;
@@ -166,10 +174,14 @@ export function IllustratedMap({
           }
         }, LONG_PRESS_MS);
       }
-      try {
-        e.currentTarget.setPointerCapture(e.pointerId);
-      } catch {
-        /* ignore */
+      if (e.pointerType !== "touch") {
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          dragRef.current.captured = true;
+          dragRef.current.capturePointerId = e.pointerId;
+        } catch {
+          /* ignore */
+        }
       }
     },
     [lockedToSilent, onMapLongPress, clearLongPressTimer]
@@ -210,6 +222,19 @@ export function IllustratedMap({
           clearLongPressTimer();
           d.dragging = true;
         }
+        if (
+          !d.captured &&
+          e.pointerType === "touch" &&
+          pointersRef.current.size <= 1
+        ) {
+          d.captured = true;
+          d.capturePointerId = e.pointerId;
+          try {
+            panLayerRef.current?.setPointerCapture?.(e.pointerId);
+          } catch {
+            /* ignore */
+          }
+        }
         const rect = el.getBoundingClientRect();
         const dx = ((e.clientX - d.startX) / rect.width) * 100;
         const dy = ((e.clientY - d.startY) / rect.height) * 100;
@@ -232,10 +257,13 @@ export function IllustratedMap({
       if (pointersRef.current.size === 0) {
         dragRef.current.active = false;
         dragRef.current.dragging = false;
+        dragRef.current.captured = false;
+        dragRef.current.capturePointerId = null;
       }
       try {
-        if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
-          e.currentTarget.releasePointerCapture(e.pointerId);
+        const panEl = panLayerRef.current;
+        if (panEl?.hasPointerCapture?.(e.pointerId)) {
+          panEl.releasePointerCapture(e.pointerId);
         }
       } catch {
         /* ignore */
@@ -362,7 +390,8 @@ export function IllustratedMap({
       )}
 
       <div
-        className="absolute inset-0 z-0 touch-none"
+        ref={panLayerRef}
+        className="map-pan-layer absolute inset-0 z-0 touch-none"
         style={{ touchAction: "none" }}
         onPointerDown={onPointerDownMap}
         onPointerMove={onPointerMoveMap}

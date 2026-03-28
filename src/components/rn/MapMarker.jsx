@@ -45,6 +45,8 @@ function MapMarkerComponent({
     Boolean(liveOn && liveShowQueue && (poi.waitUGC || 0) > 0);
   const timer = useRef(null);
   const longArmed = useRef(false);
+  const shortHandled = useRef(false);
+  const didLongPressRef = useRef(false);
   const Icon = ICONS[poi.iconKey] || MapPin;
   // Map layer is scaled by parent (`userZoom` / `SILENT_SCALE`).
   // We apply inverse scaling so the label size stays roughly constant on screen.
@@ -70,25 +72,69 @@ function MapMarkerComponent({
         type="button"
         onPointerDown={(e) => {
           e.stopPropagation();
+          if (e.button !== 0 && e.pointerType !== "touch") return;
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {
+            /* ignore */
+          }
+          shortHandled.current = false;
+          didLongPressRef.current = false;
           clearTimer();
           longArmed.current = false;
           timer.current = setTimeout(() => {
             timer.current = null;
             longArmed.current = true;
+            didLongPressRef.current = true;
             onLongPress(poi.id);
           }, 520);
         }}
-        onPointerUp={() => {
+        onPointerUp={(e) => {
+          e.stopPropagation();
           clearTimer();
-          if (!longArmed.current) onShortPress(poi.id);
+          if (!longArmed.current && !shortHandled.current) {
+            shortHandled.current = true;
+            onShortPress(poi.id);
+          }
           longArmed.current = false;
+          try {
+            if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+              e.currentTarget.releasePointerCapture(e.pointerId);
+            }
+          } catch {
+            /* ignore */
+          }
         }}
-        onPointerCancel={() => {
+        onPointerCancel={(e) => {
+          e.stopPropagation();
           clearTimer();
           longArmed.current = false;
+          try {
+            if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+              e.currentTarget.releasePointerCapture(e.pointerId);
+            }
+          } catch {
+            /* ignore */
+          }
         }}
-        onPointerLeave={clearTimer}
-        className={`pointer-events-auto touch-manipulation flex items-center gap-0.5 rounded-full border border-white/80 bg-white/95 text-left shadow-lg backdrop-blur-md ${
+        onPointerLeave={(e) => {
+          // 触屏上 pointerleave 容易误触（地图微动、合成事件），不要清掉长按计时
+          if (e.pointerType === "mouse") clearTimer();
+        }}
+        onClick={(e) => {
+          e.stopPropagation();
+          clearTimer();
+          if (didLongPressRef.current) {
+            didLongPressRef.current = false;
+            longArmed.current = false;
+            return;
+          }
+          if (!shortHandled.current) {
+            shortHandled.current = true;
+            onShortPress(poi.id);
+          }
+        }}
+        className={`pointer-events-auto touch-manipulation flex min-h-11 min-w-11 items-center gap-0.5 rounded-full border border-white/80 bg-white/95 text-left shadow-lg backdrop-blur-md ${
           compact
             ? "max-w-[104px] py-0.5 pl-0.5 pr-1.5"
             : "max-w-[140px] py-1 pl-1 pr-2.5"
