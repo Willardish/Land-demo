@@ -1,13 +1,12 @@
 /**
- * 对外分享请始终走「项目生产域名」，不要用 Vercel 单次部署域名（*-xxxx-*.vercel.app），
- * 在国内网络下常会 ERR_CONNECTION_TIMED_OUT。
+ * 对外分享走「生产主域名」，避免分享 Vercel 单次部署域名等不稳定链接。
  *
- * 优先级：VITE_PUBLIC_SITE_URL（手动）> 构建时注入的生产域名（Vercel VERCEL_PROJECT_PRODUCTION_URL）> 当前页 origin。
+ * 优先级：VITE_PUBLIC_SITE_URL > 构建注入（Vercel VERCEL_PROJECT_PRODUCTION_URL /
+ * Netlify DEPLOY_PRIME_URL）> 当前页 origin。
  */
 
-// 由 vite.config.js `define` 注入；本地构建为空字符串
 // eslint-disable-next-line no-undef
-const INJECTED_PRODUCTION_ORIGIN = __VERCEL_PRODUCTION_ORIGIN__;
+const INJECTED_PRODUCTION_ORIGIN = __PUBLIC_SITE_ORIGIN__;
 
 export function getPublicSiteOrigin() {
   const manual = import.meta.env.VITE_PUBLIC_SITE_URL?.trim().replace(/\/$/, "");
