@@ -15,8 +15,8 @@ export const POIS = [
     nonRecPercent: 12,
     coreReasons: ["夜光轨道超酷", "刺激但流程快", "记得存包"],
     waitLastReportedAt: "2026-03-26T12:00:00+08:00",
-    personaSuitability: ["thrill", "parent-child"],
-    pos: { xPct: 22, yPct: 26 },
+    personaSuitability: ["thrill", "parent-child", "chill"],
+    pos: { xPct: 26, yPct: 38 },
   },
   {
     id: "toy-story",
@@ -31,7 +31,7 @@ export const POIS = [
     coreReasons: ["色彩很玩具", "亲子友好", "排队相对短"],
     waitLastReportedAt: "2026-03-26T11:50:00+08:00",
     personaSuitability: ["parent-child", "chill"],
-    pos: { xPct: 27, yPct: 18 },
+    pos: { xPct: 27, yPct: 28 },
   },
   {
     id: "castle-hub",

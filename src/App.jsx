@@ -15,7 +15,10 @@ import { PostGenerateModal } from "./components/rn/PostGenerateModal.jsx";
 import { CheckInSheet } from "./components/rn/CheckInSheet.jsx";
 import { MessagesSheet } from "./components/rn/MessagesSheet.jsx";
 import { HelpRequestSheet } from "./components/rn/HelpRequestSheet.jsx";
+import { PublishChoiceSheet } from "./components/rn/PublishChoiceSheet.jsx";
+import { SeekHelpSheet } from "./components/rn/SeekHelpSheet.jsx";
 import { XhsHome } from "./components/rn/XhsHome.jsx";
+import { MapSearchBar } from "./components/rn/MapSearchBar.jsx";
 import { ArrowLeft, MessageCircle } from "lucide-react";
 import { POIS, POI_CATEGORIES } from "./data/poisData.js";
 import { LIVE_HELP_PINS } from "./data/liveHelpPins.js";
@@ -64,6 +67,16 @@ export default function App() {
   const [checkInDraftPoiId, setCheckInDraftPoiId] = useState(null);
   const [checkIns, setCheckIns] = useState([]); // { id, xPct, yPct, poiId, imgDataUrl, caption, ts }
 
+  /** User-published 找搭子 pins — same shape as LIVE_HELP_PINS + body + expiresAtMs */
+  const [userHelpPins, setUserHelpPins] = useState([]);
+  /** Map blank long-press → two-step publish (not POI chip) */
+  const [mapPublishDraft, setMapPublishDraft] = useState(null);
+  const [seekHelpOpen, setSeekHelpOpen] = useState(false);
+  /** { pos, poiTitle } for SeekHelpSheet */
+  const [seekHelpAnchor, setSeekHelpAnchor] = useState(null);
+  /** Editing user-published help pin in SeekHelpSheet */
+  const [helpEditingPin, setHelpEditingPin] = useState(null);
+
   const [messagesOpen, setMessagesOpen] = useState(false);
   const [messages, setMessages] = useState([]);
   const [messagesNav, setMessagesNav] = useState(null);
@@ -106,8 +119,12 @@ export default function App() {
 
   const livePinsToRender = useMemo(() => {
     if (voiceDemoPhase) return [];
-    return liveOn && liveShowUser ? LIVE_HELP_PINS : [];
-  }, [voiceDemoPhase, liveOn, liveShowUser]);
+    if (!liveOn || !liveShowUser) return [];
+    return [
+      ...LIVE_HELP_PINS,
+      ...userHelpPins.filter((p) => !p.resolved),
+    ];
+  }, [voiceDemoPhase, liveOn, liveShowUser, userHelpPins]);
 
   const drawerPoi = useMemo(
     () => POIS.find((p) => p.id === drawerPoiId) || null,
@@ -120,7 +137,9 @@ export default function App() {
     messagesOpen ||
     checkInSheetOpen ||
     postOpen ||
-    helpSheetOpen;
+    helpSheetOpen ||
+    Boolean(mapPublishDraft) ||
+    seekHelpOpen;
 
   const showMapFloats = viewMode === "map" && !mapOverlaysOpen;
 
@@ -245,7 +264,8 @@ export default function App() {
     setDrawerPoiId(id);
   }, [voiceDemoPhase]);
 
-  const onMarkerLong = useCallback((id) => {
+  const toggleRouteMultiForPoi = useCallback((id) => {
+    if (!id) return;
     if (voiceDemoPhase) {
       const p = POIS.find((x) => x.id === id);
       if (p?.isRestroom) return;
@@ -395,16 +415,76 @@ export default function App() {
     return best;
   }, []);
 
-  const openCheckIn = useCallback(
+  const openMapPublishChoice = useCallback(
     (pinPos) => {
       if (!pinPos) return;
       const nearest = findNearestPoi(pinPos);
-      setCheckInPinPosPct(pinPos);
-      setCheckInDraftPoiTitle(nearest?.title || null);
-      setCheckInDraftPoiId(nearest?.id || null);
-      setCheckInSheetOpen(true);
+      setMapPublishDraft({
+        pinPosPct: pinPos,
+        nearestTitle: nearest?.title ?? null,
+        nearestPoiId: nearest?.id ?? null,
+      });
     },
     [findNearestPoi]
+  );
+
+  const onExitSilentNav = useCallback(() => {
+    setSilentNav(null);
+    setSilentRouteLinePct([]);
+  }, []);
+
+  const onOpenHelpPin = useCallback((p) => {
+    setHelpPin(p);
+    setHelpSheetOpen(true);
+  }, []);
+
+  const onHelpPinExpired = useCallback((id) => {
+    setUserHelpPins((prev) => prev.filter((p) => p.id !== id));
+  }, []);
+
+  const submitSeekHelp = useCallback(
+    (payload) => {
+      if (payload?.editId) {
+        const nextExpires =
+          typeof payload.durationSec === "number"
+            ? Date.now() + payload.durationSec * 1000
+            : undefined;
+        setUserHelpPins((prev) =>
+          prev.map((p) =>
+            p.id === payload.editId
+              ? {
+                  ...p,
+                  title: payload.title,
+                  body: payload.body,
+                  ...(nextExpires != null ? { expiresAtMs: nextExpires } : {}),
+                }
+              : p
+          )
+        );
+        setSeekHelpOpen(false);
+        setSeekHelpAnchor(null);
+        setHelpEditingPin(null);
+        return;
+      }
+      const { title, body, durationSec, pinPosPct } = payload;
+      if (!pinPosPct) return;
+      setUserHelpPins((prev) => [
+        ...prev,
+        {
+          id: `uhelp-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          title,
+          body,
+          pos: pinPosPct,
+          expiresAtMs: Date.now() + durationSec * 1000,
+        },
+      ]);
+      if (!liveOn) toggleLive();
+      else setLiveShowUser(true);
+      setSeekHelpOpen(false);
+      setSeekHelpAnchor(null);
+      setHelpEditingPin(null);
+    },
+    [liveOn, toggleLive]
   );
 
   const saveCheckIn = useCallback(
@@ -509,6 +589,7 @@ export default function App() {
               />
             ) : (
               <>
+                <MapSearchBar />
                 <TopControls
                   viewMode={viewMode}
                   onViewMode={setViewMode}
@@ -524,6 +605,7 @@ export default function App() {
                   onToggleLiveUser={toggleLiveUser}
                   menuOpen={menuOpen}
                   onMenuOpen={setMenuOpen}
+                  withMapSearch
                 />
                 <div className="relative min-h-0 flex-1 px-0">
                   {viewMode === "map" ? (
@@ -537,13 +619,11 @@ export default function App() {
                         footprintPathPct={footprintPathPct}
                         footprintOn={footprintOn}
                         silentNav={silentNav}
-                        onExitSilentNav={() => {
-                          setSilentNav(null);
-                          setSilentRouteLinePct([]);
-                        }}
+                        onExitSilentNav={onExitSilentNav}
                         onMarkerShort={onMarkerShort}
-                        onMarkerLong={onMarkerLong}
-                        onMapLongPress={openCheckIn}
+                        onMarkerLong={toggleRouteMultiForPoi}
+                        onMapLongPress={openMapPublishChoice}
+                        onHelpPinExpired={onHelpPinExpired}
                         checkInPinPosPct={checkInPinPosPct}
                         voiceAnswerText={
                           voiceDemoPhase ? voiceAnswerText : null
@@ -556,10 +636,7 @@ export default function App() {
                               : []
                         }
                         hideSilentNavExit={Boolean(voiceDemoPhase)}
-                        onOpenHelpPin={(p) => {
-                          setHelpPin(p);
-                          setHelpSheetOpen(true);
-                        }}
+                        onOpenHelpPin={onOpenHelpPin}
                       />
                       {showMapFloats && routeSelectedOrder.length > 0 && (
                         <button
@@ -697,6 +774,53 @@ export default function App() {
           onSave={saveCheckIn}
         />
 
+        <PublishChoiceSheet
+          open={Boolean(mapPublishDraft)}
+          subLabel={
+            mapPublishDraft
+              ? `地图空白处长按${
+                  mapPublishDraft.nearestTitle
+                    ? ` · 附近参考：${mapPublishDraft.nearestTitle}`
+                    : ""
+                }`
+              : undefined
+          }
+          onClose={() => setMapPublishDraft(null)}
+          onPickCheckIn={() => {
+            if (!mapPublishDraft) return;
+            const d = mapPublishDraft;
+            setMapPublishDraft(null);
+            setCheckInPinPosPct({ ...d.pinPosPct });
+            setCheckInDraftPoiTitle(d.nearestTitle);
+            setCheckInDraftPoiId(d.nearestPoiId);
+            setCheckInSheetOpen(true);
+          }}
+          onPickSeekHelp={() => {
+            if (!mapPublishDraft) return;
+            const d = mapPublishDraft;
+            setHelpEditingPin(null);
+            setSeekHelpAnchor({
+              pos: d.pinPosPct,
+              poiTitle: d.nearestTitle,
+            });
+            setMapPublishDraft(null);
+            setSeekHelpOpen(true);
+          }}
+        />
+
+        <SeekHelpSheet
+          open={seekHelpOpen}
+          onClose={() => {
+            setSeekHelpOpen(false);
+            setSeekHelpAnchor(null);
+            setHelpEditingPin(null);
+          }}
+          poiTitle={helpEditingPin ? undefined : seekHelpAnchor?.poiTitle}
+          pinPosPct={helpEditingPin?.pos ?? seekHelpAnchor?.pos}
+          editingPin={helpEditingPin}
+          onSubmit={submitSeekHelp}
+        />
+
         <MessagesSheet
           open={messagesOpen}
           onClose={() => {
@@ -721,6 +845,32 @@ export default function App() {
               threadId: "conv-photo-buddy",
               openChat: true,
             });
+          }}
+          onEditOwn={(pin) => {
+            setHelpEditingPin({
+              id: pin.id,
+              title: pin.title,
+              body: pin.body ?? "",
+              pos: pin.pos,
+              expiresAtMs: pin.expiresAtMs,
+            });
+            setHelpSheetOpen(false);
+            setHelpPin(null);
+            setSeekHelpOpen(true);
+          }}
+          onResolveOwn={(pin) => {
+            setUserHelpPins((prev) =>
+              prev.map((p) =>
+                p.id === pin.id ? { ...p, resolved: true } : p
+              )
+            );
+            setHelpSheetOpen(false);
+            setHelpPin(null);
+          }}
+          onDeleteOwn={(pin) => {
+            setUserHelpPins((prev) => prev.filter((p) => p.id !== pin.id));
+            setHelpSheetOpen(false);
+            setHelpPin(null);
           }}
         />
       </div>

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Camera, MapPin } from "lucide-react";
 
 import { POIS } from "../../data/poisData.js";
@@ -35,8 +35,30 @@ function remapCoverToContain({ xPct, yPct }, CW, CH, IW, IH) {
 }
 
 export function MeJourneyMap({ planStopsOrder, checkIns, mapImageSrc = "/disney-map.jpg" }) {
+  const wrapRef = useRef(null);
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      setContainerSize((prev) => {
+        const w = r.width;
+        const h = r.height;
+        if (!w || !h) return prev;
+        if (prev.w === w && prev.h === h) return prev;
+        return { w, h };
+      });
+    };
+
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const planSet = useMemo(() => new Set(planStopsOrder || []), [planStopsOrder]);
   const checkInPoiIdSet = useMemo(
@@ -78,23 +100,35 @@ export function MeJourneyMap({ planStopsOrder, checkIns, mapImageSrc = "/disney-
     [stopPts, remapPct]
   );
 
+  const routePolylinePoints = useMemo(
+    () =>
+      remappedStopPts.length > 1
+        ? remappedStopPts.map((p) => `${p.xPct},${p.yPct}`).join(" ")
+        : "",
+    [remappedStopPts]
+  );
+
+  const journeyMarkers = useMemo(
+    () =>
+      journeyPois.map((poi) => ({
+        poi,
+        mapped: remapPct(poi.pos),
+        isCheckIn: checkInPoiIdSet.has(poi.id),
+      })),
+    [journeyPois, remapPct, checkInPoiIdSet]
+  );
+
   return (
     <div
+      ref={wrapRef}
       className="relative w-full overflow-hidden rounded-2xl bg-zinc-50 border border-black/5"
       style={{ aspectRatio: "16 / 9" }}
-      ref={(el) => {
-        if (!el) return;
-        const r = el.getBoundingClientRect();
-        if (!r.width || !r.height) return;
-        if (containerSize.w !== r.width || containerSize.h !== r.height) {
-          setContainerSize({ w: r.width, h: r.height });
-        }
-      }}
     >
       <img
         src={mapImageSrc}
         alt="journey-map"
         draggable={false}
+        decoding="async"
         className="h-full w-full select-none object-contain object-center pointer-events-none"
         onLoad={(e) => {
           const img = e.currentTarget;
@@ -103,7 +137,7 @@ export function MeJourneyMap({ planStopsOrder, checkIns, mapImageSrc = "/disney-
       />
 
       {/* Plan route line (visual-only) */}
-      {remappedStopPts.length > 1 && (
+      {routePolylinePoints && (
         <svg className="pointer-events-none absolute inset-0 h-full w-full" viewBox="0 0 100 100" preserveAspectRatio="none">
           <polyline
             fill="none"
@@ -112,15 +146,13 @@ export function MeJourneyMap({ planStopsOrder, checkIns, mapImageSrc = "/disney-
             strokeDasharray="2.2 2.6"
             strokeLinecap="round"
             opacity="0.8"
-            points={remappedStopPts.map((p) => `${p.xPct},${p.yPct}`).join(" ")}
+            points={routePolylinePoints}
           />
         </svg>
       )}
 
       {/* Pins: plan stops + photo check-ins */}
-      {journeyPois.map((poi) => {
-        const isCheckIn = checkInPoiIdSet.has(poi.id);
-        const mapped = remapPct(poi.pos);
+      {journeyMarkers.map(({ poi, mapped, isCheckIn }) => {
         return (
           <div
             key={poi.id}

@@ -4,7 +4,7 @@ import { tap } from "../../lib/motionPresets.js";
 
 export function ListViewPanel({ pois, selectedId, onSelect }) {
   return (
-    <div className="h-full overflow-y-auto rn-scroll px-1 pb-4 pt-24">
+    <div className="h-full overflow-y-auto rn-scroll px-1 pb-4 pt-[calc(58px+1cm+3.25rem)]">
       <AnimatePresence mode="popLayout">
         {pois.map((poi) => (
           <motion.button

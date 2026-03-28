@@ -1,33 +1,57 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { Users } from "lucide-react";
 
-const INITIAL_SEC = 5 * 60;
+const LOOP_SEC = 5 * 60;
 
-export function LiveHelpPin({ pin, onOpen, mapZoom = 1 }) {
-  const [left, setLeft] = useState(INITIAL_SEC);
+function secondsLeftForPin(pin) {
+  if (pin.expiresAtMs != null) {
+    return Math.max(0, Math.ceil((pin.expiresAtMs - Date.now()) / 1000));
+  }
+  return LOOP_SEC;
+}
+
+function LiveHelpPinComponent({ pin, onOpen, mapZoom = 1, onExpired }) {
+  const [left, setLeft] = useState(() => secondsLeftForPin(pin));
 
   useEffect(() => {
+    setLeft(secondsLeftForPin(pin));
+  }, [pin.id, pin.expiresAtMs]);
+
+  useEffect(() => {
+    if (pin.expiresAtMs != null) {
+      const tick = () => {
+        const next = secondsLeftForPin(pin);
+        setLeft(next);
+        if (next <= 0) onExpired?.(pin.id);
+      };
+      tick();
+      const id = setInterval(tick, 1000);
+      return () => clearInterval(id);
+    }
+
     const id = setInterval(() => {
-      setLeft((s) => (s <= 0 ? INITIAL_SEC : s - 1));
+      setLeft((s) => (s <= 0 ? LOOP_SEC : s - 1));
     }, 1000);
     return () => clearInterval(id);
-  }, []);
+  }, [pin.id, pin.expiresAtMs, onExpired]);
 
   const mm = String(Math.floor(left / 60)).padStart(2, "0");
   const ss = String(left % 60).padStart(2, "0");
   const counterScale = 1 / Math.max(0.001, mapZoom);
 
+  if (pin.expiresAtMs != null && left <= 0) return null;
+
   return (
     <div
-      className="absolute z-[55] -translate-x-1/2 -translate-y-1/2"
+      className="pointer-events-none absolute z-[55] -translate-x-1/2 -translate-y-1/2"
       style={{ left: `${pin.pos.xPct}%`, top: `${pin.pos.yPct}%` }}
     >
       <motion.button
         type="button"
         onClick={() => onOpen?.(pin)}
         onPointerDown={(e) => e.stopPropagation()}
-        className="flex flex-col items-center gap-0.5"
+        className="pointer-events-auto touch-manipulation flex flex-col items-center gap-0.5"
         initial={{ scale: 0, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.5, opacity: 0 }}
@@ -52,3 +76,12 @@ export function LiveHelpPin({ pin, onOpen, mapZoom = 1 }) {
     </div>
   );
 }
+
+export const LiveHelpPin = memo(LiveHelpPinComponent, (prev, next) => {
+  return (
+    prev.pin === next.pin &&
+    prev.onOpen === next.onOpen &&
+    prev.mapZoom === next.mapZoom &&
+    prev.onExpired === next.onExpired
+  );
+});

@@ -1,20 +1,44 @@
 @import "tailwindcss";
 
 html,
-body,
+body {
+  margin: 0;
+  min-height: 100%;
+  min-height: 100dvh;
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
 #root {
-  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  min-height: 100dvh;
+  width: 100%;
+  overflow-x: visible;
+  overflow-y: visible;
+  touch-action: manipulation;
 }
 
 body {
-  margin: 0;
-  min-height: 100vh;
   background: #e5e7eb;
   -webkit-tap-highlight-color: transparent;
+  overscroll-behavior: none;
+  touch-action: pan-x pan-y;
 }
 
-/* Hide scrollbar but keep scroll (list panel) */
+.rn-demo-root {
+  touch-action: manipulation;
+}
+
+/* Scrollable areas: keep touch scroll, hide scrollbar chrome */
 .rn-scroll {
   -webkit-overflow-scrolling: touch;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.rn-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }

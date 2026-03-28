@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { memo, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Zap,
@@ -31,7 +31,7 @@ const ICONS = {
   Star,
 };
 
-export function MapMarker({
+function MapMarkerComponent({
   poi,
   liveOn,
   liveShowQueue = false,
@@ -59,7 +59,7 @@ export function MapMarker({
 
   return (
     <motion.div
-      className="absolute z-[65] -translate-x-1/2 -translate-y-1/2"
+      className="pointer-events-none absolute z-[65] -translate-x-1/2 -translate-y-1/2"
       style={{ left: `${poi.pos.xPct}%`, top: `${poi.pos.yPct}%` }}
       initial={{ scale: 0, opacity: 0 }}
       animate={{ scale: 1, opacity: 1 }}
@@ -88,7 +88,7 @@ export function MapMarker({
           longArmed.current = false;
         }}
         onPointerLeave={clearTimer}
-        className={`flex items-center gap-0.5 rounded-full border border-white/80 bg-white/95 text-left shadow-lg backdrop-blur-md ${
+        className={`pointer-events-auto touch-manipulation flex items-center gap-0.5 rounded-full border border-white/80 bg-white/95 text-left shadow-lg backdrop-blur-md ${
           compact
             ? "max-w-[104px] py-0.5 pl-0.5 pr-1.5"
             : "max-w-[140px] py-1 pl-1 pr-2.5"
@@ -137,3 +137,16 @@ export function MapMarker({
     </motion.div>
   );
 }
+
+export const MapMarker = memo(MapMarkerComponent, (prev, next) => {
+  return (
+    prev.poi === next.poi &&
+    prev.liveOn === next.liveOn &&
+    prev.liveShowQueue === next.liveShowQueue &&
+    prev.compact === next.compact &&
+    prev.mapZoom === next.mapZoom &&
+    prev.selectedRoute === next.selectedRoute &&
+    prev.onShortPress === next.onShortPress &&
+    prev.onLongPress === next.onLongPress
+  );
+});

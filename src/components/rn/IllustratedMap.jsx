@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { MapMarker } from "./MapMarker.jsx";
 import { LiveHelpPin } from "./LiveHelpPin.jsx";
@@ -6,8 +6,10 @@ import { LiveHelpPin } from "./LiveHelpPin.jsx";
 const MIN_Z = 0.75;
 const MAX_Z = 5.2;
 // Silent mode default zoom: 60% of the interactive maximum zoom.
-// This keeps the view immersive without showing the full park.
 const SILENT_SCALE = MAX_Z * 0.6;
+// After entering the map from the XHS home, start at half of max zoom for immersion.
+const DEFAULT_MAP_ZOOM = MAX_Z * 0.5;
+const SILENT_UI_COUNTER = 1 / SILENT_SCALE;
 const MOVE_THRESHOLD_PX = 10;
 const LONG_PRESS_MS = 520;
 
@@ -30,12 +32,17 @@ export function IllustratedMap({
   voiceRouteLinePct,
   hideSilentNavExit,
   mapImageSrc = "/disney-map.jpg",
+  onHelpPinExpired,
 }) {
   const isSilent = Boolean(silentNav?.center);
   const containerRef = useRef(null);
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
   const [naturalSize, setNaturalSize] = useState({ w: 0, h: 0 });
   const userPanRef = useRef({ x: 0, y: 0 });
+  const userZoomRef = useRef(DEFAULT_MAP_ZOOM);
+  const lockedToSilentRef = useRef(false);
+  const pointersRef = useRef(new Map());
+  const pinchRef = useRef(null);
   const dragRef = useRef({
     active: false,
     startX: 0,
@@ -46,11 +53,15 @@ export function IllustratedMap({
   });
 
   const [userPan, setUserPan] = useState({ x: 0, y: 0 });
-  const [userZoom, setUserZoom] = useState(1);
+  const [userZoom, setUserZoom] = useState(DEFAULT_MAP_ZOOM);
 
   useEffect(() => {
     userPanRef.current = userPan;
   }, [userPan]);
+
+  useEffect(() => {
+    userZoomRef.current = userZoom;
+  }, [userZoom]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -58,13 +69,18 @@ export function IllustratedMap({
 
     const update = () => {
       const r = el.getBoundingClientRect();
-      setContainerSize({ w: r.width, h: r.height });
+      setContainerSize((prev) => {
+        const w = r.width;
+        const h = r.height;
+        if (prev.w === w && prev.h === h) return prev;
+        return { w, h };
+      });
     };
 
     update();
-    const onResize = () => update();
-    window.addEventListener("resize", onResize, { passive: true });
-    return () => window.removeEventListener("resize", onResize);
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, []);
 
   const cx = silentNav?.center?.xPct ?? 50;
@@ -72,15 +88,22 @@ export function IllustratedMap({
 
   const lockedToSilent = isSilent;
 
-  const onWheel = useCallback(
-    (e) => {
-      if (lockedToSilent) return;
+  useEffect(() => {
+    lockedToSilentRef.current = lockedToSilent;
+  }, [lockedToSilent]);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onWheel = (e) => {
+      if (lockedToSilentRef.current) return;
       e.preventDefault();
       const delta = e.deltaY > 0 ? -0.08 : 0.08;
       setUserZoom((z) => Math.min(MAX_Z, Math.max(MIN_Z, z + delta)));
-    },
-    [lockedToSilent]
-  );
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   const timerRef = useRef(null);
   const clearLongPressTimer = useCallback(() => {
@@ -93,9 +116,28 @@ export function IllustratedMap({
   const onPointerDownMap = useCallback(
     (e) => {
       if (lockedToSilent) return;
-      if (e.button !== 0) return;
+      if (e.button !== 0 && e.pointerType !== "touch") return;
       const t = e.target;
       if (t.closest && t.closest("button")) return;
+
+      pointersRef.current.set(e.pointerId, {
+        x: e.clientX,
+        y: e.clientY,
+      });
+
+      if (pointersRef.current.size >= 2) {
+        clearLongPressTimer();
+        dragRef.current.active = false;
+        dragRef.current.dragging = false;
+        const pts = [...pointersRef.current.values()];
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        pinchRef.current = {
+          startDist: Math.max(dist, 8),
+          startZoom: userZoomRef.current,
+        };
+        return;
+      }
+
       clearLongPressTimer();
       const el = containerRef.current;
       if (!el) return;
@@ -119,7 +161,7 @@ export function IllustratedMap({
         timerRef.current = setTimeout(() => {
           timerRef.current = null;
           const d = dragRef.current;
-          if (d.active && !d.dragging) {
+          if (d.active && !d.dragging && pointersRef.current.size <= 1) {
             onMapLongPress(longPressPos);
           }
         }, LONG_PRESS_MS);
@@ -135,6 +177,27 @@ export function IllustratedMap({
 
   const onPointerMoveMap = useCallback(
     (e) => {
+      if (pointersRef.current.has(e.pointerId)) {
+        pointersRef.current.set(e.pointerId, {
+          x: e.clientX,
+          y: e.clientY,
+        });
+      }
+
+      if (
+        pinchRef.current &&
+        pointersRef.current.size >= 2 &&
+        !lockedToSilent
+      ) {
+        const pts = [...pointersRef.current.values()];
+        const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+        const ratio = dist / pinchRef.current.startDist;
+        const next = pinchRef.current.startZoom * ratio;
+        setUserZoom(Math.min(MAX_Z, Math.max(MIN_Z, next)));
+        e.preventDefault();
+        return;
+      }
+
       const d = dragRef.current;
       if (!d.active || lockedToSilent) return;
       const el = containerRef.current;
@@ -159,11 +222,27 @@ export function IllustratedMap({
     [lockedToSilent, clearLongPressTimer]
   );
 
-  const endDrag = useCallback(() => {
-    clearLongPressTimer();
-    dragRef.current.active = false;
-    dragRef.current.dragging = false;
-  }, [clearLongPressTimer]);
+  const onPointerUpOrCancelMap = useCallback(
+    (e) => {
+      pointersRef.current.delete(e.pointerId);
+      if (pointersRef.current.size < 2) {
+        pinchRef.current = null;
+      }
+      clearLongPressTimer();
+      if (pointersRef.current.size === 0) {
+        dragRef.current.active = false;
+        dragRef.current.dragging = false;
+      }
+      try {
+        if (e.currentTarget.hasPointerCapture?.(e.pointerId)) {
+          e.currentTarget.releasePointerCapture(e.pointerId);
+        }
+      } catch {
+        /* ignore */
+      }
+    },
+    [clearLongPressTimer]
+  );
 
   // POI coordinates were authored against the old `object-cover` rendering.
   // We now render the full image via `object-contain`, so we must remap:
@@ -204,43 +283,72 @@ export function IllustratedMap({
     [containerSize, naturalSize]
   );
 
-  const parentScale = lockedToSilent ? SILENT_SCALE : userZoom;
-  const mappedVoiceRoute = (voiceRouteLinePct || []).map(remapPct);
-  const mappedFootprintPath = (footprintPathPct || []).map(remapPct);
-  const mappedPins = (livePins || []).map((pin) => ({
-    ...pin,
-    pos: remapPct(pin.pos),
-  }));
-  const mappedPois = (pois || []).map((poi) => ({
-    ...poi,
-    pos: remapPct(poi.pos),
-  }));
-  const mappedSilentCenter = silentNav?.center ? remapPct(silentNav.center) : null;
+  const mappedVoiceRoute = useMemo(
+    () => (voiceRouteLinePct || []).map(remapPct),
+    [voiceRouteLinePct, remapPct]
+  );
+  const mappedFootprintPath = useMemo(
+    () => (footprintPathPct || []).map(remapPct),
+    [footprintPathPct, remapPct]
+  );
+  const mappedPins = useMemo(
+    () =>
+      (livePins || []).map((pin) => ({
+        ...pin,
+        pos: remapPct(pin.pos),
+      })),
+    [livePins, remapPct]
+  );
+  const mappedPois = useMemo(
+    () =>
+      (pois || []).map((poi) => ({
+        ...poi,
+        pos: remapPct(poi.pos),
+      })),
+    [pois, remapPct]
+  );
+  const mappedSilentCenter = useMemo(
+    () => (silentNav?.center ? remapPct(silentNav.center) : null),
+    [silentNav, remapPct]
+  );
 
   const silentCx = mappedSilentCenter?.xPct ?? cx;
   const silentCy = mappedSilentCenter?.yPct ?? cy;
 
-  const mapTransform = lockedToSilent
-    ? {
-        // For silent navigation we must translate using the remapped center
-        // so the camera aligns to the same coordinate system as markers/overlays.
+  const voiceRoutePoints = useMemo(
+    () =>
+      mappedVoiceRoute.length > 1
+        ? mappedVoiceRoute.map((p) => `${p.xPct},${p.yPct}`).join(" ")
+        : "",
+    [mappedVoiceRoute]
+  );
+
+  const footprintPolylinePoints = useMemo(
+    () =>
+      mappedFootprintPath.length > 1
+        ? mappedFootprintPath.map((p) => `${p.xPct},${p.yPct}`).join(" ")
+        : "",
+    [mappedFootprintPath]
+  );
+
+  const mapTransform = useMemo(() => {
+    if (lockedToSilent) {
+      return {
         transform: `translate(calc((50 - ${silentCx}) * 1%), calc((50 - ${silentCy}) * 1%)) scale(${SILENT_SCALE})`,
         transformOrigin: "50% 50%",
-      }
-    : {
-        transform: `translate(${userPan.x}%, ${userPan.y}%) scale(${userZoom})`,
-        transformOrigin: "50% 50%",
       };
+    }
+    return {
+      transform: `translate(${userPan.x}%, ${userPan.y}%) scale(${userZoom})`,
+      transformOrigin: "50% 50%",
+    };
+  }, [lockedToSilent, silentCx, silentCy, userPan.x, userPan.y, userZoom]);
 
   return (
     <div
       ref={containerRef}
       className="relative h-full w-full overflow-hidden rounded-2xl bg-zinc-200 shadow-inner"
-      onWheel={onWheel}
-      onPointerDown={onPointerDownMap}
-      onPointerMove={onPointerMoveMap}
-      onPointerUp={endDrag}
-      onPointerCancel={endDrag}
+      style={{ touchAction: "none" }}
     >
       {voiceAnswerText && (
         <div className="pointer-events-none absolute left-1/2 top-[96px] z-[60] w-[280px] -translate-x-1/2 rounded-2xl border border-black/5 bg-white/85 px-3 py-2 shadow-lg backdrop-blur-md">
@@ -253,20 +361,35 @@ export function IllustratedMap({
         </div>
       )}
 
-      <div className="absolute inset-0 touch-none" style={mapTransform}>
-        <div className="relative h-full w-full">
+      <div
+        className="absolute inset-0 z-0 touch-none"
+        style={{ touchAction: "none" }}
+        onPointerDown={onPointerDownMap}
+        onPointerMove={onPointerMoveMap}
+        onPointerUp={onPointerUpOrCancelMap}
+        onPointerCancel={onPointerUpOrCancelMap}
+      />
+
+      <div className="pointer-events-none absolute inset-0 z-[1]">
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{ ...mapTransform, touchAction: "none" }}
+      >
+        <div className="relative h-full w-full pointer-events-none">
           <img
             src={mapImageSrc}
             alt="上海迪士尼乐园地图"
             className="h-full w-full select-none object-contain object-center pointer-events-none"
             draggable={false}
+            decoding="async"
+            fetchPriority="high"
             onLoad={(e) => {
               const img = e.currentTarget;
               setNaturalSize({ w: img.naturalWidth || 0, h: img.naturalHeight || 0 });
             }}
           />
 
-          {mappedVoiceRoute && mappedVoiceRoute.length > 1 && (
+          {voiceRoutePoints && (
             <svg
               className="pointer-events-none absolute inset-0 h-full w-full"
               viewBox="0 0 100 100"
@@ -290,14 +413,12 @@ export function IllustratedMap({
                     ? { duration: 1.1, repeat: Infinity, ease: "linear" }
                     : undefined
                 }
-                points={mappedVoiceRoute
-                  .map((p) => `${p.xPct},${p.yPct}`)
-                  .join(" ")}
+                points={voiceRoutePoints}
               />
             </svg>
           )}
 
-          {footprintOn && mappedFootprintPath.length > 1 && (
+          {footprintOn && footprintPolylinePoints && (
             <svg
               className="pointer-events-none absolute inset-0 h-full w-full"
               viewBox="0 0 100 100"
@@ -311,16 +432,14 @@ export function IllustratedMap({
                 strokeLinecap="round"
                 strokeLinejoin="round"
                 opacity="0.65"
-                points={mappedFootprintPath
-                  .map((p) => `${p.xPct},${p.yPct}`)
-                  .join(" ")}
+                points={footprintPolylinePoints}
               />
             </svg>
           )}
 
           {footprintOn && mappedFootprintPath.length > 0 && (
             <div
-              className="absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[#ff2442] shadow-md"
+              className="pointer-events-none absolute h-3 w-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[#ff2442] shadow-md"
               style={{
                 left: `${mappedFootprintPath[mappedFootprintPath.length - 1].xPct}%`,
                 top: `${mappedFootprintPath[mappedFootprintPath.length - 1].yPct}%`,
@@ -346,29 +465,35 @@ export function IllustratedMap({
 
           {isSilent && (
             <>
-              <motion.div
-                className="absolute z-50 h-2 w-2 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[#ff2442] shadow-md"
+              <div
+                className="pointer-events-none absolute z-50 flex h-0 w-0 items-center justify-center"
                 style={{
                   left: `${mappedSilentCenter?.xPct ?? 50}%`,
                   top: `${mappedSilentCenter?.yPct ?? 50}%`,
+                  transform: `translate(-50%, -50%) scale(${SILENT_UI_COUNTER})`,
                 }}
-              />
-              <motion.div
-                className="absolute z-40 rounded-full border-2 border-[#ff2442]/50"
+              >
+                <motion.div className="h-2 w-2 shrink-0 rounded-full border-2 border-white bg-[#ff2442] shadow-md" />
+              </div>
+              <div
+                className="pointer-events-none absolute z-40 flex h-0 w-0 items-center justify-center"
                 style={{
                   left: `${mappedSilentCenter?.xPct ?? 50}%`,
                   top: `${mappedSilentCenter?.yPct ?? 50}%`,
-                  width: 18,
-                  height: 18,
-                  transform: "translate(-50%, -50%)",
+                  transform: `translate(-50%, -50%) scale(${SILENT_UI_COUNTER})`,
                 }}
-                animate={{ scale: [1, 2.5], opacity: [0.7, 0] }}
-                transition={{
-                  duration: 1.5,
-                  repeat: Infinity,
-                  ease: "easeOut",
-                }}
-              />
+              >
+                <motion.div
+                  className="shrink-0 rounded-full border-2 border-[#ff2442]/50"
+                  style={{ width: 18, height: 18 }}
+                  animate={{ scale: [1, 2.5], opacity: [0.7, 0] }}
+                  transition={{
+                    duration: 1.5,
+                    repeat: Infinity,
+                    ease: "easeOut",
+                  }}
+                />
+              </div>
               <div className="pointer-events-none absolute bottom-3 left-1/2 z-50 -translate-x-1/2 rounded-full bg-black/55 px-3 py-1.5 text-[10px] font-bold text-white backdrop-blur-sm">
                 沿主路前进 · 下一转弯（Mock）
               </div>
@@ -383,6 +508,7 @@ export function IllustratedMap({
                   pin={pin}
                   onOpen={onOpenHelpPin}
                   mapZoom={userZoom}
+                  onExpired={onHelpPinExpired}
                 />
               ))}
             </>
@@ -390,7 +516,7 @@ export function IllustratedMap({
 
           {checkInPinPosPct && !isSilent && (
             <motion.div
-              className="absolute z-[49]"
+              className="pointer-events-none absolute z-[49]"
               style={{
                 left: `${checkInPinPosPct.xPct}%`,
                 top: `${checkInPinPosPct.yPct}%`,
@@ -409,10 +535,11 @@ export function IllustratedMap({
           )}
         </div>
       </div>
+      </div>
 
       {!isSilent && (
-        <div className="pointer-events-none absolute bottom-2 right-2 z-40 max-w-[140px] rounded-lg bg-black/45 px-2 py-1 text-[9px] font-bold leading-tight text-white backdrop-blur-sm">
-          滚轮缩放 · 长按空白打卡 · 拖动平移
+        <div className="pointer-events-none absolute bottom-2 right-2 z-40 max-w-[168px] rounded-lg bg-black/45 px-2 py-1 text-[9px] font-bold leading-tight text-white backdrop-blur-sm">
+          滚轮/双指缩放 · 长按空白发布 · 拖动平移
         </div>
       )}
 
